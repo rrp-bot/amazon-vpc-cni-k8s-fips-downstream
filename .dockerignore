@@ -1,0 +1,10 @@
+.git
+.gitmodules
+**/.git
+**/.gitmodules
+upstream/aws-cni
+upstream/aws-k8s-agent
+upstream/egress-cni
+upstream/grpc-health-probe
+upstream/aws-vpc-cni
+upstream/core-plugins

@@ -1,0 +1,67 @@
+ARG golang_image=registry.access.redhat.com/ubi9/go-toolset:9.8-1791479310
+ARG base_image=registry.access.redhat.com/ubi9/ubi-minimal:9.8-1791765279
+
+FROM ${golang_image} AS builder
+
+USER root
+WORKDIR /workspace/upstream
+
+COPY upstream/ ./
+
+# The downstream build uses the Red Hat Go toolchain's native FIPS module.
+ENV GO111MODULE=on \
+    GOPROXY=direct \
+    CGO_ENABLED=1 \
+    GOFIPS140=certified \
+    GOFLAGS=-buildvcs=false
+
+ARG GO_BUILD_TAGS=strictfipsruntime,no_openssl
+ARG VERSION=downstream
+
+RUN go mod download
+RUN mkdir -p /out && \
+    go build -buildmode=pie -tags "${GO_BUILD_TAGS}" \
+      -ldflags "-s -w -X pkg/version/info.Version=${VERSION} -X pkg/awsutils/awssession.version=${VERSION}" \
+      -o /out/aws-vpc-cni ./cmd/aws-vpc-cni && \
+    go build -buildmode=pie -tags "${GO_BUILD_TAGS}" \
+      -ldflags "-s -w -X pkg/version/info.Version=${VERSION} -X pkg/awsutils/awssession.version=${VERSION}" \
+      -o /out/aws-k8s-agent ./cmd/aws-k8s-agent && \
+    go build -buildmode=pie -tags "${GO_BUILD_TAGS}" \
+      -ldflags "-s -w -X pkg/version/info.Version=${VERSION} -X pkg/awsutils/awssession.version=${VERSION}" \
+      -o /out/aws-cni ./cmd/routed-eni-cni-plugin && \
+    go build -buildmode=pie -tags "${GO_BUILD_TAGS}" \
+      -ldflags "-s -w -X pkg/version/info.Version=${VERSION} -X pkg/awsutils/awssession.version=${VERSION}" \
+      -o /out/grpc-health-probe ./cmd/grpc-health-probe && \
+    go build -buildmode=pie -tags "${GO_BUILD_TAGS}" \
+      -ldflags "-s -w -X pkg/version/info.Version=${VERSION} -X pkg/awsutils/awssession.version=${VERSION}" \
+      -o /out/egress-cni ./cmd/egress-cni-plugin
+
+FROM ${base_image}
+
+ARG SOURCE_URL=https://github.com/aws/amazon-vpc-cni-k8s
+ARG SOURCE_REVISION=unknown
+ARG VERSION=downstream
+
+LABEL org.opencontainers.image.title="Amazon VPC CNI" \
+      org.opencontainers.image.description="FIPS-enabled Amazon VPC CNI container" \
+      org.opencontainers.image.source="${SOURCE_URL}" \
+      org.opencontainers.image.revision="${SOURCE_REVISION}" \
+      org.opencontainers.image.version="${VERSION}"
+
+RUN microdnf install -y ca-certificates iproute iptables openssl-libs util-linux-core && \
+    microdnf clean all && \
+    rm -rf /var/cache/yum
+
+ENV GODEBUG=fips140=auto
+WORKDIR /app
+
+COPY --from=builder /out/aws-vpc-cni \
+    /out/aws-k8s-agent \
+    /out/aws-cni \
+    /out/grpc-health-probe \
+    /out/egress-cni \
+    /workspace/upstream/misc/10-aws.conflist \
+    /workspace/upstream/misc/eni-max-pods.txt \
+    /app/
+
+ENTRYPOINT ["/app/aws-vpc-cni"]

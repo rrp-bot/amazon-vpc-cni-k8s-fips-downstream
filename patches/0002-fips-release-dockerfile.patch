@@ -1,0 +1,53 @@
+diff --git a/scripts/dockerfiles/Dockerfile.release b/scripts/dockerfiles/Dockerfile.release
+index 2c845ab..cdd4ff3 100644
+--- a/scripts/dockerfiles/Dockerfile.release
++++ b/scripts/dockerfiles/Dockerfile.release
+@@ -2,29 +2,32 @@ ARG golang_image
+ ARG base_image
+ 
+ FROM $golang_image AS builder
+-WORKDIR /go/src/github.com/aws/amazon-vpc-cni-k8s
++WORKDIR /tmp
++RUN mkdir -p /tmp/workspace && chmod 0777 /tmp/workspace
++WORKDIR /tmp/workspace
+ ARG TARGETARCH
+-# Configure build with Go modules
+-ENV GO111MODULE=on
+-ENV GOPROXY=direct
++ENV GO111MODULE=on \
++    GOPROXY=direct \
++    CGO_ENABLED=1 \
++    GOFIPS140=certified \
++    GO_BUILD_TAGS=strictfipsruntime,no_openssl \
++    GOFLAGS=-buildvcs=false
+ 
+ COPY . ./
+ RUN make build-aws-vpc-cni && make build-linux
+ 
+-# Build from EKS minimal base + iptables by default
+ FROM $base_image
+-
++RUN microdnf install -y ca-certificates iproute iptables openssl-libs util-linux-core \
++    && microdnf clean all
++ENV GODEBUG=fips140=auto
+ WORKDIR /app
+ 
+-COPY --from=builder /go/src/github.com/aws/amazon-vpc-cni-k8s/aws-cni \
+-    /go/src/github.com/aws/amazon-vpc-cni-k8s/misc/10-aws.conflist \
+-    /go/src/github.com/aws/amazon-vpc-cni-k8s/misc/eni-max-pods.txt \
+-    /go/src/github.com/aws/amazon-vpc-cni-k8s/aws-k8s-agent \
+-    /go/src/github.com/aws/amazon-vpc-cni-k8s/grpc-health-probe \
+-    /go/src/github.com/aws/amazon-vpc-cni-k8s/egress-cni \
+-    /go/src/github.com/aws/amazon-vpc-cni-k8s/aws-vpc-cni /app/
+-
+-# Set iptables mode automatically based on kubelet hint
+-RUN ["update-alternatives", "--set", "iptables", "/usr/sbin/iptables-wrapper"]
++COPY --from=builder /tmp/workspace/aws-cni \
++    /tmp/workspace/misc/10-aws.conflist \
++    /tmp/workspace/misc/eni-max-pods.txt \
++    /tmp/workspace/aws-k8s-agent \
++    /tmp/workspace/grpc-health-probe \
++    /tmp/workspace/egress-cni \
++    /tmp/workspace/aws-vpc-cni /app/
+ 
+ ENTRYPOINT ["/app/aws-vpc-cni"]

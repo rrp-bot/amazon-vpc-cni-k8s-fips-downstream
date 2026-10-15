@@ -1,0 +1,39 @@
+diff --git a/scripts/dockerfiles/Dockerfile.init b/scripts/dockerfiles/Dockerfile.init
+index 48afad5..a6a13d5 100644
+--- a/scripts/dockerfiles/Dockerfile.init
++++ b/scripts/dockerfiles/Dockerfile.init
+@@ -2,24 +2,24 @@ ARG golang_image
+ ARG base_image
+ 
+ FROM $golang_image AS builder
+-WORKDIR /go/src/github.com/aws/amazon-vpc-cni-k8s
+-ARG TARGETARCH
+-# Configure build with Go modules
+-ENV GO111MODULE=on
+-ENV GOPROXY=direct
++WORKDIR /tmp
++RUN mkdir -p /tmp/workspace && chmod 0777 /tmp/workspace
++WORKDIR /tmp/workspace
++ENV GO111MODULE=on GOPROXY=direct CGO_ENABLED=1 GOFIPS140=certified GO_BUILD_TAGS=strictfipsruntime,no_openssl GOFLAGS=-buildvcs=false
+ 
+ COPY . ./
+ RUN make plugins && make debug-script
+ RUN make build-aws-vpc-cni-init
+ 
+-# Build from EKS minimal base + glibc by default
+ FROM $base_image
+-
++RUN microdnf install -y ca-certificates iproute iptables openssl-libs util-linux-core \
++    && microdnf clean all
++ENV GODEBUG=fips140=auto
+ WORKDIR /init
+ 
+ COPY --from=builder \
+-    /go/src/github.com/aws/amazon-vpc-cni-k8s/core-plugins/ \
+-    /go/src/github.com/aws/amazon-vpc-cni-k8s/aws-cni-support.sh \
+-    /go/src/github.com/aws/amazon-vpc-cni-k8s/aws-vpc-cni-init /init/
++    /tmp/workspace/core-plugins/ \
++    /tmp/workspace/aws-cni-support.sh \
++    /tmp/workspace/aws-vpc-cni-init /init/
+ 
+ CMD ["/init/aws-vpc-cni-init"]
